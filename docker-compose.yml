@@ -1,0 +1,14 @@
+services:
+  channeld:
+    build: .
+    image: channeld:0.1.0
+    ports:
+      - "4319:4319"
+    environment:
+      CHANNEL_CONFIG: /configs/channeld.json
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4319/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
