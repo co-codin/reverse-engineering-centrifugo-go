@@ -47,3 +47,42 @@ func TestDurationAndInheritance(t *testing.T) {
 		t.Fatal("missing chat namespace")
 	}
 }
+
+func TestResolveChannelAndGlob(t *testing.T) {
+	cfg := Default()
+	ns, code, _ := ResolveChannel(cfg, "chat:lobby")
+	if code != 0 || ns.Name != "chat" || !ns.AllowPublishForSubscriber {
+		t.Fatalf("%+v %d", ns, code)
+	}
+	plain, code, _ := ResolveChannel(cfg, "lobby")
+	if code != 0 || plain.Name != "" {
+		t.Fatalf("%+v %d", plain, code)
+	}
+	news, code, _ := ResolveChannel(cfg, "news:desk")
+	if code != 0 || news.AllowPublishForSubscriber || news.AllowPublishForClient {
+		t.Fatalf("%+v %d", news, code)
+	}
+	if _, code, msg := ResolveChannel(cfg, "missing:room"); code != 102 || msg != "unknown channel" {
+		t.Fatalf("%d %s", code, msg)
+	}
+	for _, name := range []string{"", "bad name", ":room", "room:"} {
+		if _, code, _ := ResolveChannel(cfg, name); code != 107 {
+			t.Fatalf("%q -> %d", name, code)
+		}
+	}
+	if !Glob("", "anything") || !Glob("chat:*", "chat:lobby") || !Glob("chat:?", "chat:a") {
+		t.Fatal("expected matches")
+	}
+	if Glob("chat:*", "news:lobby") || Glob("chat:?", "chat:lobby") {
+		t.Fatal("unexpected match")
+	}
+}
+
+func TestRejectsBadConfig(t *testing.T) {
+	if _, err := Parse([]byte(`{"port":70000}`)); err == nil {
+		t.Fatal("accepted an out of range port")
+	}
+	if _, err := Parse([]byte(`{"channel":{"namespaces":[{"name":"bad:name"}]}}`)); err == nil {
+		t.Fatal("accepted a namespace name containing a colon")
+	}
+}
