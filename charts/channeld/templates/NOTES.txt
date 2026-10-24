@@ -1,0 +1,9 @@
+channeld is a single process. History lives in that process and is not shared across pods.
+
+Forward the service:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "channeld.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+WebSocket: ws://127.0.0.1:{{ .Values.service.port }}/connection/websocket
+Health:    http://127.0.0.1:{{ .Values.service.port }}/health
+Publish:   POST http://127.0.0.1:{{ .Values.service.port }}/api/publish

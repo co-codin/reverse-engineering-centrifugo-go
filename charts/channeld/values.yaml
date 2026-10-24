@@ -1,0 +1,64 @@
+replicaCount: 1
+
+image:
+  repository: channeld
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 4319
+
+ingress:
+  enabled: false
+  className: ""
+  host: channeld.local
+  path: /
+  annotations: {}
+  tls: false
+
+# History stays in the process. Keep one replica.
+config:
+  host: 0.0.0.0
+  port: 4319
+  nodeName: channeld
+  httpApi:
+    key: dev-api-key
+    insecure: true
+  client:
+    tokenHmacSecret: dev-secret
+    anonymous: true
+    pingInterval: 25s
+  channel:
+    historySize: 100
+    historyTtl: 5m
+    presence: true
+    joinLeave: true
+    forceRecovery: true
+    forcePositioning: true
+    allowSubscribeForClient: true
+    allowPublishForSubscriber: true
+    namespaces:
+      - name: chat
+      - name: news
+        allowPublishForSubscriber: false
+        allowPublishForClient: false
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
