@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-serif: Georgia, "Iowan Old Style", Palatino, "Palatino Linotype", serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+}
+
+:root {
+  --background: #efeae2;
+  --foreground: #1c1915;
+  --card: #f7f4ee;
+  --card-foreground: #1c1915;
+  --primary: #1f3d32;
+  --primary-foreground: #f6f3ec;
+  --secondary: #e4ddd1;
+  --secondary-foreground: #1c1915;
+  --muted: #e7e1d6;
+  --muted-foreground: #6f695e;
+  --accent: #e7e0d4;
+  --accent-foreground: #1c1915;
+  --destructive: #9c2f2f;
+  --destructive-foreground: #f8f1ea;
+  --border: #d9d2c5;
+  --input: #d4cdc0;
+  --ring: #1f3d32;
+  --radius: 0.45rem;
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background:
+    radial-gradient(circle at top left, rgba(31, 61, 50, 0.05), transparent 28rem),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+#root {
+  min-height: 100svh;
+}
