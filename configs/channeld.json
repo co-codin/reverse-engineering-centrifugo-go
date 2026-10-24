@@ -1,0 +1,32 @@
+{
+  "port": 4319,
+  "host": "0.0.0.0",
+  "node_name": "channeld",
+  "http_api": {
+    "key": "dev-api-key",
+    "insecure": true
+  },
+  "client": {
+    "token_hmac_secret": "dev-secret",
+    "anonymous": true,
+    "ping_interval": "25s"
+  },
+  "channel": {
+    "history_size": 100,
+    "history_ttl": "5m",
+    "presence": true,
+    "join_leave": true,
+    "force_recovery": true,
+    "force_positioning": true,
+    "allow_subscribe_for_client": true,
+    "allow_publish_for_subscriber": true,
+    "namespaces": [
+      { "name": "chat" },
+      {
+        "name": "news",
+        "allow_publish_for_subscriber": false,
+        "allow_publish_for_client": false
+      }
+    ]
+  }
+}
