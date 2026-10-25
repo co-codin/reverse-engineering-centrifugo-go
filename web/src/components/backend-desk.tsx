@@ -44,7 +44,7 @@ export function BackendDesk() {
       setResponse('')
       return
     }
-    void run('Publishing\u2026', 'publish', { channel: channel.trim(), data })
+    void run('Publishing…', 'publish', { channel: channel.trim(), data })
   }
 
   return (
@@ -69,7 +69,7 @@ export function BackendDesk() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={publish} disabled={pending !== '' || channel.trim() === ''}>
-              {pending === 'Publishing\u2026' ? pending : 'Publish'}
+              {pending === 'Publishing…' ? pending : 'Publish'}
             </Button>
             <Button
               type="button"
@@ -78,7 +78,7 @@ export function BackendDesk() {
               onClick={() => {
                 setChannel('news:desk')
                 setPayload('{\n  "headline": "desk update"\n}')
-                void run('Publishing\u2026', 'publish', { channel: 'news:desk', data: { headline: 'desk update' } })
+                void run('Publishing…', 'publish', { channel: 'news:desk', data: { headline: 'desk update' } })
               }}
             >
               Publish to news:desk
@@ -99,17 +99,17 @@ export function BackendDesk() {
             type="button"
             variant="outline"
             disabled={pending !== '' || user.trim() === '' || serverChannel.trim() === ''}
-            onClick={() => { void run('Subscribing\u2026', 'subscribe', { user: user.trim(), channel: serverChannel.trim() }) }}
+            onClick={() => { void run('Subscribing…', 'subscribe', { user: user.trim(), channel: serverChannel.trim() }) }}
           >
-            {pending === 'Subscribing\u2026' ? pending : 'Subscribe user'}
+            {pending === 'Subscribing…' ? pending : 'Subscribe user'}
           </Button>
           <Button
             type="button"
             variant="destructive"
             disabled={pending !== '' || user.trim() === ''}
-            onClick={() => { void run('Disconnecting\u2026', 'disconnect', { user: user.trim() }) }}
+            onClick={() => { void run('Disconnecting…', 'disconnect', { user: user.trim() }) }}
           >
-            {pending === 'Disconnecting\u2026' ? pending : 'Disconnect user'}
+            {pending === 'Disconnecting…' ? pending : 'Disconnect user'}
           </Button>
         </div>
       </div>
