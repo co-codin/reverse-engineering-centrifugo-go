@@ -34,7 +34,7 @@ func TestDurationAndInheritance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shipped.Port != 4319 || !shipped.Insecure {
+	if shipped.Port != 4319 || !shipped.Insecure || len(shipped.AllowedOrigins) != 2 {
 		t.Fatalf("%+v", shipped)
 	}
 	foundChat := false
@@ -84,5 +84,33 @@ func TestRejectsBadConfig(t *testing.T) {
 	}
 	if _, err := Parse([]byte(`{"channel":{"namespaces":[{"name":"bad:name"}]}}`)); err == nil {
 		t.Fatal("accepted a namespace name containing a colon")
+	}
+	if _, err := Parse([]byte(`{"client":{"allowed_origins":["http://evil.example"]}}`)); err == nil {
+		t.Fatal("accepted an origin URL")
+	}
+	if _, err := Parse([]byte(`{"client":{"proxy":{"connect":{"enabled":true}}}}`)); err == nil {
+		t.Fatal("accepted a connect proxy without an endpoint")
+	}
+	cfg, err := Parse([]byte(`{
+		"client": {"proxy": {"connect": {"enabled": true, "endpoint": "http://app/connect", "timeout": "1s"}}},
+		"channel": {
+			"proxy": {"subscribe": {"endpoint": "http://app/subscribe"}},
+			"namespaces": [{"name": "chat", "subscribe_proxy_enabled": true}]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ConnectProxyEnabled || cfg.ConnectProxyEndpoint != "http://app/connect" || cfg.SubscribeProxyEndpoint != "http://app/subscribe" {
+		t.Fatalf("%+v", cfg)
+	}
+	var chat *NamespaceConfig
+	for i := range cfg.Namespaces {
+		if cfg.Namespaces[i].Name == "chat" {
+			chat = &cfg.Namespaces[i]
+		}
+	}
+	if chat == nil || !chat.SubscribeProxyEnabled {
+		t.Fatal("chat subscribe proxy")
 	}
 }
