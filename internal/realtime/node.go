@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,7 @@ const (
 	discForce            = 3500
 	discBadRequest       = 3501
 	discUnauthorized     = 3503
+	discUnavailable      = 3004
 	maxFrame             = 64 * 1024
 	maxSubs              = 32
 	maxHistoryLimit      = 100
@@ -62,6 +64,9 @@ type conn struct {
 	writeMu           sync.Mutex
 	stop              chan struct{}
 	connectTimer      *time.Timer
+	expireTimer       *time.Timer
+	cookie            string
+	authorization     string
 }
 
 type delivery struct {
@@ -79,38 +84,42 @@ type outcome struct {
 
 // Node is one realtime process.
 type Node struct {
-	cfg       config.Config
-	uid       string
-	started   time.Time
-	mu        sync.Mutex
-	engine    *engine.Engine
-	live      map[*conn]struct{}
-	sessions  map[string]*conn
-	byChannel map[string]map[string]*conn
-	stopping  bool
+	cfg        config.Config
+	uid        string
+	started    time.Time
+	mu         sync.Mutex
+	engine     *engine.Engine
+	live       map[*conn]struct{}
+	sessions   map[string]*conn
+	byChannel  map[string]map[string]*conn
+	stopping   bool
+	httpClient *http.Client
 }
 
 // New builds an empty node.
 func New(cfg config.Config) *Node {
 	return &Node{
-		cfg:       cfg,
-		uid:       newID(),
-		started:   time.Now(),
-		engine:    engine.New(),
-		live:      map[*conn]struct{}{},
-		sessions:  map[string]*conn{},
-		byChannel: map[string]map[string]*conn{},
+		cfg:        cfg,
+		uid:        newID(),
+		started:    time.Now(),
+		engine:     engine.New(),
+		live:       map[*conn]struct{}{},
+		sessions:   map[string]*conn{},
+		byChannel:  map[string]map[string]*conn{},
+		httpClient: &http.Client{},
 	}
 }
 
-func (n *Node) accept(ws *websocket.Conn) {
+func (n *Node) accept(ws *websocket.Conn, r *http.Request) {
 	ws.SetReadLimit(maxFrame + 1)
 	c := &conn{
-		id:      newID(),
-		session: newID(),
-		subs:    map[string]subState{},
-		ws:      ws,
-		stop:    make(chan struct{}),
+		id:            newID(),
+		session:       newID(),
+		subs:          map[string]subState{},
+		ws:            ws,
+		stop:          make(chan struct{}),
+		cookie:        r.Header.Get("Cookie"),
+		authorization: r.Header.Get("Authorization"),
 	}
 	n.mu.Lock()
 	n.live[c] = struct{}{}
@@ -155,6 +164,9 @@ func (n *Node) drop(c *conn) {
 	}
 	if c.connectTimer != nil {
 		c.connectTimer.Stop()
+	}
+	if c.expireTimer != nil {
+		c.expireTimer.Stop()
 	}
 	select {
 	case <-c.stop:
