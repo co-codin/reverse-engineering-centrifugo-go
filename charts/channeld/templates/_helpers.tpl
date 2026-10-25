@@ -53,7 +53,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   "client": {
     "token_hmac_secret": {{ .Values.config.client.tokenHmacSecret | quote }},
     "anonymous": {{ .Values.config.client.anonymous }},
-    "ping_interval": {{ .Values.config.client.pingInterval | quote }}
+    "ping_interval": {{ .Values.config.client.pingInterval | quote }},
+    "allowed_origins": {{ .Values.config.client.allowedOrigins | toJson }},
+    "proxy": {
+      "connect": {
+        "enabled": {{ .Values.config.client.connectProxy.enabled }},
+        "endpoint": {{ .Values.config.client.connectProxy.endpoint | quote }},
+        "timeout": {{ .Values.config.client.connectProxy.timeout | quote }}
+      }
+    }
   },
   "channel": {
     "history_size": {{ .Values.config.channel.historySize }},
@@ -64,6 +72,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
     "force_positioning": {{ .Values.config.channel.forcePositioning }},
     "allow_subscribe_for_client": {{ .Values.config.channel.allowSubscribeForClient }},
     "allow_publish_for_subscriber": {{ .Values.config.channel.allowPublishForSubscriber }},
+    "proxy": {
+      "subscribe": {
+        "endpoint": {{ .Values.config.channel.subscribeProxy.endpoint | quote }},
+        "timeout": {{ .Values.config.channel.subscribeProxy.timeout | quote }}
+      }
+    },
     "namespaces": [
       {{- range $i, $ns := .Values.config.channel.namespaces }}
       {{- if $i }},{{ end }}
@@ -74,6 +88,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
         {{- end }}
         {{- if hasKey $ns "allowPublishForClient" }},
         "allow_publish_for_client": {{ $ns.allowPublishForClient }}
+        {{- end }}
+        {{- if hasKey $ns "subscribeProxyEnabled" }},
+        "subscribe_proxy_enabled": {{ $ns.subscribeProxyEnabled }}
         {{- end }}
       }
       {{- end }}

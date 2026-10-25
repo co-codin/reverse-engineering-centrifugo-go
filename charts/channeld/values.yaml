@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: channeld
+  repository: ghcr.io/co-codin/reverse-engineering-centrifugo-go
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
@@ -30,12 +30,17 @@ config:
   port: 4319
   nodeName: channeld
   httpApi:
-    key: dev-api-key
-    insecure: true
+    key: ""
+    insecure: false
   client:
-    tokenHmacSecret: dev-secret
-    anonymous: true
+    tokenHmacSecret: ""
+    anonymous: false
     pingInterval: 25s
+    allowedOrigins: []
+    connectProxy:
+      enabled: false
+      endpoint: ""
+      timeout: 1s
   channel:
     historySize: 100
     historyTtl: 5m
@@ -45,6 +50,9 @@ config:
     forcePositioning: true
     allowSubscribeForClient: true
     allowPublishForSubscriber: true
+    subscribeProxy:
+      endpoint: ""
+      timeout: 1s
     namespaces:
       - name: chat
       - name: news

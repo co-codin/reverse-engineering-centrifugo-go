@@ -1,0 +1,15 @@
+{{- if or (eq .Values.config.httpApi.key "") (eq .Values.config.httpApi.key "dev-api-key") }}
+{{- fail "config.httpApi.key must be a secret other than dev-api-key" }}
+{{- end }}
+{{- if or (eq .Values.config.client.tokenHmacSecret "") (eq .Values.config.client.tokenHmacSecret "dev-secret") }}
+{{- fail "config.client.tokenHmacSecret must be a secret other than dev-secret" }}
+{{- end }}
+{{- if .Values.config.httpApi.insecure }}
+{{- fail "config.httpApi.insecure must be false" }}
+{{- end }}
+{{- if .Values.config.client.anonymous }}
+{{- fail "config.client.anonymous must be false" }}
+{{- end }}
+{{- if and .Values.config.client.connectProxy.enabled (eq .Values.config.client.connectProxy.endpoint "") }}
+{{- fail "config.client.connectProxy.endpoint is required when the connect proxy is enabled" }}
+{{- end }}
