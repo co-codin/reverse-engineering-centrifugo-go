@@ -44,7 +44,7 @@ That runs `go test ./...`:
 | `internal/config` | durations, namespace inheritance, channel names, glob matching |
 | `internal/token` | HS256 sign and verify, expiry, bad claims, wrong algorithm |
 | `internal/engine` | history paging, recovery gaps, expiry, idempotency |
-| `internal/realtime` | WebSocket protocol, presence, HTTP API, disconnect, ping timeout |
+| `internal/realtime` | WebSocket protocol, origin check, connect and subscribe proxies, presence, HTTP API, disconnect, ping timeout |
 
 ## Docker
 
@@ -59,18 +59,23 @@ docker run --rm -p 4319:4319 channeld:0.1.0
 
 ## Helm
 
-The chart runs one pod. History is in memory, so `replicaCount` must stay 1. The pod reads its config from a Secret mounted at `/configs/channeld.json` and answers `/health` for readiness.
+The chart runs one pod. History is in memory, so `replicaCount` must stay 1. The pod reads its config from a Secret mounted at `/configs/channeld.json` and answers `/health` for readiness. A push to `main` publishes `ghcr.io/co-codin/reverse-engineering-centrifugo-go:0.1.0` after `go test ./...` passes.
 
-Build the image and make it visible to the cluster, then:
+The chart refuses the dev API key, the dev HMAC secret, an open HTTP API, and anonymous clients. Set those before installing:
 
 ```bash
 helm install channeld charts/channeld \
-  --set image.repository=channeld \
-  --set image.tag=0.1.0
+  --set config.httpApi.key="$API_KEY" \
+  --set config.client.tokenHmacSecret="$TOKEN_SECRET" \
+  --set config.client.allowedOrigins[0]=app.example
 kubectl port-forward svc/channeld 4319:4319
 ```
 
-`helm test channeld` requests `/health` from inside the cluster. Turn on `ingress.enabled` when clients should reach the WebSocket from outside the cluster. The API key and HMAC secret in the chart values are the dev defaults; change them before pointing the chart at anything shared.
+`allowedOrigins` lists browser hosts that may open the WebSocket from another origin, such as `app.example` or `127.0.0.1:4327`. An empty list allows only the same host. Clients with no `Origin` header, including the Go tests, are still accepted.
+
+`helm test channeld` requests `/health` from inside the cluster. Turn on `ingress.enabled` when clients should reach the WebSocket from outside the cluster.
+
+`docker run` and `make dev` use `configs/channeld.json`, which leaves the HTTP API open and allows anonymous clients so the console can run on one machine. That file is not what the chart installs.
 
 ## Talk to it
 
@@ -104,6 +109,37 @@ Other HTTP methods: `broadcast`, `presence`, `presence_stats`, `history`, `histo
 
 History keeps the last 100 publications for 5 minutes. Subscriptions are recoverable, so a client that reconnects is sent what it missed. Presence and join/leave are on. `rpc` method `echo` returns its data; other RPC methods answer `104`.
 
+## Application proxies
+
+A connect proxy runs when a browser connects without a JWT. A subscribe proxy runs for namespaces that set `subscribe_proxy_enabled`. Both are HTTP POSTs with the Centrifugo proxy JSON. Leave them unset and the node keeps using the token and the namespace flags.
+
+```json
+{
+  "client": {
+    "proxy": {
+      "connect": {
+        "enabled": true,
+        "endpoint": "http://app:3000/centrifugo/connect",
+        "timeout": "1s"
+      }
+    }
+  },
+  "channel": {
+    "proxy": {
+      "subscribe": {
+        "endpoint": "http://app:3000/centrifugo/subscribe",
+        "timeout": "1s"
+      }
+    },
+    "namespaces": [
+      { "name": "chat", "subscribe_proxy_enabled": true }
+    ]
+  }
+}
+```
+
+The connect handler returns `{"result":{"user":"56"}}`. The subscribe handler returns `{"result":{}}` to allow the channel, or `{"error":{"code":403,"message":"permission denied"}}` to refuse it. `Cookie` and `Authorization` from the WebSocket handshake are forwarded on the connect request as `headers`.
+
 ## Left for later
 
-Redis or NATS fan-out, protobuf, SSE, gRPC, subscription proxies, delta compression, and the Centrifugo PRO API. Those are how Centrifugo runs more than one machine and how it calls back into an application. The protocol above is enough for one node and for the official JavaScript client.
+Redis or NATS fan-out, protobuf, SSE, gRPC, publish proxy, delta compression, and the Centrifugo PRO API. Those are how Centrifugo runs more than one machine and how it calls back into an application for publish. The protocol above is enough for one node and for the official JavaScript client.
