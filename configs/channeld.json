@@ -9,7 +9,8 @@
   "client": {
     "token_hmac_secret": "dev-secret",
     "anonymous": true,
-    "ping_interval": "25s"
+    "ping_interval": "25s",
+    "allowed_origins": ["127.0.0.1:4327", "localhost:4327"]
   },
   "channel": {
     "history_size": 100,
