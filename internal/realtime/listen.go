@@ -72,11 +72,11 @@ func (n *Node) route(w http.ResponseWriter, r *http.Request) {
 }
 
 func (n *Node) serveWS(w http.ResponseWriter, r *http.Request) {
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: n.cfg.AllowedOrigins})
 	if err != nil {
 		return
 	}
-	n.accept(ws)
+	n.accept(ws, r)
 }
 
 func (n *Node) serveAPI(w http.ResponseWriter, r *http.Request, method string) {
