@@ -80,6 +80,34 @@ func TestRejectsBadTokens(t *testing.T) {
 	}
 }
 
+func TestSubscriptionToken(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	signed, err := Sign(Claims{
+		Sub:     "alice",
+		Channel: "chat:secret",
+		Exp:     now.Add(time.Minute).Unix(),
+		Info:    json.RawMessage(`{"role":"member"}`),
+	}, "dev-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := VerifySubscription(signed, "dev-secret", now)
+	if err != nil || got.Expired || got.BadRequest {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if got.Claims.Sub != "alice" || got.Claims.Channel != "chat:secret" || string(got.Claims.Info) != `{"role":"member"}` {
+		t.Fatalf("%+v", got.Claims)
+	}
+	connection, err := Verify(signed, "dev-secret", now)
+	if err != nil || connection.Claims.Channel != "" {
+		t.Fatalf("connection verify %+v %v", connection, err)
+	}
+	missing, err := VerifySubscription(signRaw(`{"alg":"HS256","typ":"JWT"}`, `{"sub":"alice"}`, "dev-secret"), "dev-secret", now)
+	if err != nil || !missing.BadRequest {
+		t.Fatalf("missing channel %+v %v", missing, err)
+	}
+}
+
 func signRaw(headerJSON, bodyJSON, secret string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(headerJSON))
 	body := base64.RawURLEncoding.EncodeToString([]byte(bodyJSON))

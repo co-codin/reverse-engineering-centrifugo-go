@@ -1,3 +1,4 @@
+// Package token signs and checks HS256 connection JWTs.
 package token
 
 import (
