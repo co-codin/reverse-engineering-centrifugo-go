@@ -113,4 +113,28 @@ func TestRejectsBadConfig(t *testing.T) {
 	if chat == nil || !chat.SubscribeProxyEnabled {
 		t.Fatal("chat subscribe proxy")
 	}
+	if _, err := Parse([]byte(`{"channel":{"namespaces":[{"name":"chat","publish_proxy_enabled":true}]}}`)); err == nil {
+		t.Fatal("accepted a publish proxy without an endpoint")
+	}
+	published, err := Parse([]byte(`{
+		"channel": {
+			"proxy": {"publish": {"endpoint": "http://app/publish", "timeout": "1s"}},
+			"namespaces": [{"name": "chat", "publish_proxy_enabled": true}]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published.PublishProxyEndpoint != "http://app/publish" || published.PublishProxyTimeoutMs != 1000 {
+		t.Fatalf("%+v", published)
+	}
+	found := false
+	for _, ns := range published.Namespaces {
+		if ns.Name == "chat" {
+			found = ns.PublishProxyEnabled
+		}
+	}
+	if !found {
+		t.Fatal("chat publish proxy")
+	}
 }

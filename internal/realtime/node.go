@@ -46,7 +46,9 @@ const (
 )
 
 type subState struct {
-	chanInfo json.RawMessage
+	chanInfo    json.RawMessage
+	expireAt    int64
+	expireTimer *time.Timer
 }
 
 type conn struct {
@@ -65,6 +67,7 @@ type conn struct {
 	stop              chan struct{}
 	connectTimer      *time.Timer
 	expireTimer       *time.Timer
+	expireAt          int64
 	cookie            string
 	authorization     string
 }
@@ -84,16 +87,24 @@ type outcome struct {
 
 // Node is one realtime process.
 type Node struct {
-	cfg        config.Config
-	uid        string
-	started    time.Time
-	mu         sync.Mutex
-	engine     *engine.Engine
-	live       map[*conn]struct{}
-	sessions   map[string]*conn
-	byChannel  map[string]map[string]*conn
-	stopping   bool
-	httpClient *http.Client
+	cfg          config.Config
+	uid          string
+	started      time.Time
+	mu           sync.Mutex
+	engine       *engine.Engine
+	live         map[*conn]struct{}
+	sessions     map[string]*conn
+	byChannel    map[string]map[string]*conn
+	stopping     bool
+	httpClient   *http.Client
+	publications atomic.Uint64
+	proxies      map[string]*proxyStat
+}
+
+type proxyStat struct {
+	ok       atomic.Uint64
+	failed   atomic.Uint64
+	duration atomic.Uint64
 }
 
 // New builds an empty node.
@@ -107,6 +118,11 @@ func New(cfg config.Config) *Node {
 		sessions:   map[string]*conn{},
 		byChannel:  map[string]map[string]*conn{},
 		httpClient: &http.Client{},
+		proxies: map[string]*proxyStat{
+			"connect":   {},
+			"subscribe": {},
+			"publish":   {},
+		},
 	}
 }
 
@@ -191,7 +207,7 @@ func (n *Node) disconnect(c *conn, code int, reason string) {
 	c.writeClose(payload, code, reason)
 }
 
-// Shutdown closes every connection.
+// Shutdown tells every client to reconnect, then closes the socket.
 func (n *Node) Shutdown() {
 	n.mu.Lock()
 	n.stopping = true
@@ -201,8 +217,62 @@ func (n *Node) Shutdown() {
 	}
 	n.mu.Unlock()
 	for _, c := range all {
-		n.drop(c)
-		c.ws.CloseNow()
+		n.disconnect(c, discShutdown, "shutdown")
+	}
+}
+
+func (n *Node) armExpire(c *conn, exp int64) {
+	if c.expireTimer != nil {
+		c.expireTimer.Stop()
+		c.expireTimer = nil
+	}
+	if exp <= time.Now().Unix() {
+		c.expireAt = 0
+		return
+	}
+	c.expireAt = exp
+	c.expireTimer = time.AfterFunc(time.Until(time.Unix(exp, 0)), func() {
+		n.disconnect(c, discExpired, "expired")
+	})
+}
+
+func (n *Node) armSubExpire(c *conn, channel string, exp int64) {
+	sub, ok := c.subs[channel]
+	if !ok {
+		return
+	}
+	if sub.expireTimer != nil {
+		sub.expireTimer.Stop()
+		sub.expireTimer = nil
+	}
+	if exp <= time.Now().Unix() {
+		sub.expireAt = 0
+		c.subs[channel] = sub
+		return
+	}
+	sub.expireAt = exp
+	sub.expireTimer = time.AfterFunc(time.Until(time.Unix(exp, 0)), func() {
+		n.expireSubscription(c, channel)
+	})
+	c.subs[channel] = sub
+}
+
+func (n *Node) expireSubscription(c *conn, channel string) {
+	n.mu.Lock()
+	sub, ok := c.subs[channel]
+	if !ok || c.dropped.Load() || sub.expireAt > time.Now().Unix() {
+		n.mu.Unlock()
+		return
+	}
+	effects := n.removeSubLocked(c, channel)
+	n.mu.Unlock()
+	payload := mustEncode([]any{map[string]any{"push": map[string]any{
+		"channel":     channel,
+		"unsubscribe": map[string]any{"code": errTokenExpired, "reason": "expired"},
+	}}})
+	c.write(true, payload)
+	for _, effect := range effects {
+		effect.conn.write(true, effect.payload)
 	}
 }
 
@@ -275,6 +345,7 @@ func (n *Node) publishLocked(channel string, ns config.NamespaceConfig, data jso
 	if outcome.Duplicate || outcome.Publication == nil {
 		return outcome, nil
 	}
+	n.publications.Add(1)
 	payload := mustEncode([]any{map[string]any{"push": map[string]any{"channel": channel, "pub": outcome.Publication.Wire()}}})
 	var out []delivery
 	for _, member := range n.byChannel[channel] {
@@ -329,6 +400,9 @@ func (n *Node) attachLocked(c *conn, channel string, ns config.NamespaceConfig, 
 		result["data"] = hint.resultData
 	}
 	c.subs[channel] = subState{chanInfo: hint.chanInfo}
+	if hint.expireAt > time.Now().Unix() {
+		n.armSubExpire(c, channel, hint.expireAt)
+	}
 	set := n.byChannel[channel]
 	if set == nil {
 		set = map[string]*conn{}
@@ -347,12 +421,16 @@ type attachHint struct {
 	flag        int64
 	chanInfo    json.RawMessage
 	resultData  json.RawMessage
+	expireAt    int64
 }
 
 func (n *Node) removeSubLocked(c *conn, channel string) []delivery {
 	sub, ok := c.subs[channel]
 	if !ok {
 		return nil
+	}
+	if sub.expireTimer != nil {
+		sub.expireTimer.Stop()
 	}
 	delete(c.subs, channel)
 	if set := n.byChannel[channel]; set != nil {

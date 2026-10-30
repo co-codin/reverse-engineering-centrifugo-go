@@ -76,6 +76,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
       "subscribe": {
         "endpoint": {{ .Values.config.channel.subscribeProxy.endpoint | quote }},
         "timeout": {{ .Values.config.channel.subscribeProxy.timeout | quote }}
+      },
+      "publish": {
+        "endpoint": {{ .Values.config.channel.publishProxy.endpoint | quote }},
+        "timeout": {{ .Values.config.channel.publishProxy.timeout | quote }}
       }
     },
     "namespaces": [
@@ -91,6 +95,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
         {{- end }}
         {{- if hasKey $ns "subscribeProxyEnabled" }},
         "subscribe_proxy_enabled": {{ $ns.subscribeProxyEnabled }}
+        {{- end }}
+        {{- if hasKey $ns "publishProxyEnabled" }},
+        "publish_proxy_enabled": {{ $ns.publishProxyEnabled }}
         {{- end }}
       }
       {{- end }}

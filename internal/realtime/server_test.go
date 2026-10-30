@@ -145,6 +145,9 @@ type frame struct {
 	Publish     json.RawMessage `json:"publish"`
 	Unsubscribe json.RawMessage `json:"unsubscribe"`
 	Push        json.RawMessage `json:"push"`
+	Refresh     json.RawMessage `json:"refresh"`
+	SubRefresh  json.RawMessage `json:"sub_refresh"`
+	RPC         json.RawMessage `json:"rpc"`
 }
 
 func decodeFrames(t *testing.T, data []byte) []frame {

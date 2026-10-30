@@ -61,9 +61,11 @@ func (n *Node) route(w http.ResponseWriter, r *http.Request) {
 		n.serveWS(w, r)
 	case r.Method == http.MethodGet && path == "/health":
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case path == "/metrics":
+		n.serveMetrics(w, r)
 	case r.Method == http.MethodGet && path == "/":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, "channeld realtime node\nwebsocket  /connection/websocket\nhttp api   /api/publish\n")
+		_, _ = io.WriteString(w, "channeld realtime node\nwebsocket  /connection/websocket\nhttp api   /api/publish\nmetrics    /metrics\n")
 	case strings.HasPrefix(path, "/api/"):
 		n.serveAPI(w, r, strings.TrimPrefix(path, "/api/"))
 	default:

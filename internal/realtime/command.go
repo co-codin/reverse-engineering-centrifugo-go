@@ -83,6 +83,8 @@ func (n *Node) onCommand(c *conn, cmd rawCommand) outcome {
 		return n.connectCommand(c, id, body)
 	case "subscribe":
 		return n.subscribeCommand(c, id, body)
+	case "publish":
+		return n.publishCommand(c, id, body)
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -92,8 +94,6 @@ func (n *Node) onCommand(c *conn, cmd rawCommand) outcome {
 	switch method {
 	case "unsubscribe":
 		return n.onUnsubscribe(c, id, body)
-	case "publish":
-		return n.onPublish(c, id, body)
 	case "presence":
 		return n.onPresence(c, id, body)
 	case "presence_stats":
@@ -103,10 +103,12 @@ func (n *Node) onCommand(c *conn, cmd rawCommand) outcome {
 	case "rpc":
 		return n.onRPC(id, body)
 	case "refresh":
-		return outcome{reply: map[string]any{"id": id, "refresh": map[string]any{}}}
+		return n.onRefresh(c, id, body)
+	case "sub_refresh":
+		return n.onSubRefresh(c, id, body)
 	case "send":
 		return outcome{}
-	case "ping", "sub_refresh":
+	case "ping":
 		return outcome{reply: errorReply(id, errNotAvailable, "not available")}
 	default:
 		return outcome{reply: errorReply(id, errMethodNotFound, "method not found")}

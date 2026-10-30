@@ -19,7 +19,7 @@ func (n *Node) onUnsubscribe(c *conn, id uint32, body json.RawMessage) outcome {
 	return outcome{reply: map[string]any{"id": id, "unsubscribe": map[string]any{}}, effects: effects}
 }
 
-func (n *Node) onPublish(c *conn, id uint32, body json.RawMessage) outcome {
+func (n *Node) publishCommand(c *conn, id uint32, body json.RawMessage) outcome {
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return outcome{reply: errorReply(id, errBadRequest, "bad request")}
@@ -38,11 +38,46 @@ func (n *Node) onPublish(c *conn, id uint32, body json.RawMessage) outcome {
 	if req.Type != nil && *req.Type != 0 {
 		return outcome{reply: errorReply(id, errNotAvailable, "not available")}
 	}
+	n.mu.Lock()
+	if c.dropped.Load() || !c.protocolConnected {
+		n.mu.Unlock()
+		return disconnectOutcome(discBadRequest, "bad request")
+	}
+	user := c.user
+	n.mu.Unlock()
 	ns, code, message := config.ResolveChannel(n.cfg, req.Channel)
 	if code != 0 {
 		return outcome{reply: errorReply(id, code, message)}
 	}
+	n.mu.Lock()
+	if c.dropped.Load() || !c.protocolConnected {
+		n.mu.Unlock()
+		return outcome{}
+	}
 	_, subscribed := c.subs[req.Channel]
+	allowed := ns.AllowPublishForClient || (ns.AllowPublishForSubscriber && subscribed)
+	n.mu.Unlock()
+	if !allowed {
+		return outcome{reply: errorReply(id, errPermissionDenied, "permission denied")}
+	}
+	data := req.Data
+	skip := false
+	if ns.PublishProxyEnabled {
+		proxied, bad := n.publishProxy(c, id, user, req.Channel, req.Data)
+		if bad != nil {
+			return *bad
+		}
+		if len(proxied.Data) > 0 && string(proxied.Data) != "null" {
+			data = proxied.Data
+		}
+		skip = proxied.SkipHistory
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if c.dropped.Load() || !c.protocolConnected {
+		return outcome{}
+	}
+	_, subscribed = c.subs[req.Channel]
 	if !ns.AllowPublishForClient && !(ns.AllowPublishForSubscriber && subscribed) {
 		return outcome{reply: errorReply(id, errPermissionDenied, "permission denied")}
 	}
@@ -50,8 +85,65 @@ func (n *Node) onPublish(c *conn, id uint32, body json.RawMessage) outcome {
 	if sub, ok := c.subs[req.Channel]; ok {
 		chanInfo = sub.chanInfo
 	}
-	_, effects := n.publishLocked(req.Channel, ns, req.Data, false, wireInfo(c, chanInfo), nil, "")
+	_, effects := n.publishLocked(req.Channel, ns, data, skip, wireInfo(c, chanInfo), nil, "")
 	return outcome{reply: map[string]any{"id": id, "publish": map[string]any{}}, effects: effects}
+}
+
+func (n *Node) publishProxy(c *conn, id uint32, user, channel string, data json.RawMessage) (publishProxyResult, *outcome) {
+	payload := map[string]any{
+		"client":    c.id,
+		"transport": "websocket",
+		"protocol":  "json",
+		"encoding":  "json",
+		"user":      user,
+		"channel":   channel,
+	}
+	if len(data) > 0 && string(data) != "null" {
+		payload["data"] = data
+	}
+	resp, err := n.postProxy("publish", n.cfg.PublishProxyEndpoint, proxyTimeout(n.cfg.PublishProxyTimeoutMs), payload)
+	if err != nil {
+		bad := outcome{reply: errorReply(id, errInternal, "internal server error")}
+		return publishProxyResult{}, &bad
+	}
+	if resp.Disconnect != nil && resp.Disconnect.Code != 0 {
+		reason := resp.Disconnect.Reason
+		if reason == "" {
+			reason = "disconnect"
+		}
+		errCode := errPermissionDenied
+		errMsg := reason
+		if resp.Error != nil {
+			if resp.Error.Code != 0 {
+				errCode = resp.Error.Code
+			}
+			if resp.Error.Message != "" {
+				errMsg = resp.Error.Message
+			}
+		}
+		bad := outcome{reply: errorReply(id, errCode, errMsg), disconnect: true, code: resp.Disconnect.Code, reason: reason}
+		return publishProxyResult{}, &bad
+	}
+	if resp.Error != nil {
+		code := resp.Error.Code
+		if code == 0 {
+			code = errPermissionDenied
+		}
+		msg := resp.Error.Message
+		if msg == "" {
+			msg = "permission denied"
+		}
+		bad := outcome{reply: errorReply(id, code, msg)}
+		return publishProxyResult{}, &bad
+	}
+	var result publishProxyResult
+	if len(resp.Result) > 0 && string(resp.Result) != "null" {
+		if err := json.Unmarshal(resp.Result, &result); err != nil {
+			bad := outcome{reply: errorReply(id, errInternal, "internal server error")}
+			return publishProxyResult{}, &bad
+		}
+	}
+	return result, nil
 }
 
 func (n *Node) onPresence(c *conn, id uint32, body json.RawMessage) outcome {

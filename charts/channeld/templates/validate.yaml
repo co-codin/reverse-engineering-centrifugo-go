@@ -13,3 +13,8 @@
 {{- if and .Values.config.client.connectProxy.enabled (eq .Values.config.client.connectProxy.endpoint "") }}
 {{- fail "config.client.connectProxy.endpoint is required when the connect proxy is enabled" }}
 {{- end }}
+{{- range .Values.config.channel.namespaces }}
+{{- if and .publishProxyEnabled (eq $.Values.config.channel.publishProxy.endpoint "") }}
+{{- fail "config.channel.publishProxy.endpoint is required when a namespace enables the publish proxy" }}
+{{- end }}
+{{- end }}

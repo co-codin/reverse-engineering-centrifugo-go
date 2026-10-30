@@ -33,6 +33,11 @@ type connectProxyResult struct {
 	Channels []string        `json:"channels"`
 }
 
+type publishProxyResult struct {
+	Data        json.RawMessage `json:"data"`
+	SkipHistory bool            `json:"skip_history"`
+}
+
 type subscribeProxyResult struct {
 	Info     json.RawMessage `json:"info"`
 	Data     json.RawMessage `json:"data"`
@@ -48,7 +53,14 @@ type boolValue struct {
 	Value bool `json:"value"`
 }
 
-func (n *Node) postProxy(endpoint string, timeout time.Duration, payload any) (proxyResponse, error) {
+func (n *Node) postProxy(kind, endpoint string, timeout time.Duration, payload any) (proxyResponse, error) {
+	start := time.Now()
+	resp, err := n.callProxy(endpoint, timeout, payload)
+	n.observeProxy(kind, time.Since(start), err)
+	return resp, err
+}
+
+func (n *Node) callProxy(endpoint string, timeout time.Duration, payload any) (proxyResponse, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return proxyResponse{}, err

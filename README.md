@@ -2,7 +2,7 @@
 
 A single-node realtime server, written in Go, that speaks the [Centrifugo](https://centrifugal.dev) client protocol and HTTP API.
 
-Centrifugo is a Go pub/sub server: clients open one WebSocket, subscribe to channels, and receive publications. Your application publishes through an HTTP API. That core is small enough to run yourself. channeld is that core, in one process, with an in-memory history. Running many machines, and the hooks Centrifugo uses to call back into an application, can come later.
+Centrifugo is a Go pub/sub server: clients open one WebSocket, subscribe to channels, and receive publications. Your application publishes through an HTTP API. That core is small enough to run yourself. channeld is that core, in one process, with an in-memory history. Connect, subscribe, and publish can each ask your application before they proceed. Running many machines can come later.
 
 ## Layout
 
@@ -42,9 +42,9 @@ That runs `go test ./...`:
 | Package | What it checks |
 | --- | --- |
 | `internal/config` | durations, namespace inheritance, channel names, glob matching |
-| `internal/token` | HS256 sign and verify, expiry, bad claims, wrong algorithm |
+| `internal/token` | HS256 connection and subscription tokens, expiry, bad claims, wrong algorithm |
 | `internal/engine` | history paging, recovery gaps, expiry, idempotency |
-| `internal/realtime` | WebSocket protocol, origin check, connect and subscribe proxies, presence, HTTP API, disconnect, ping timeout |
+| `internal/realtime` | WebSocket protocol, origin check, connect, subscribe, and publish proxies, channel tokens, refresh, metrics, presence, HTTP API, shutdown, ping timeout |
 
 ## Docker
 
@@ -59,7 +59,7 @@ docker run --rm -p 4319:4319 channeld:0.1.0
 
 ## Helm
 
-The chart runs one pod. History is in memory, so `replicaCount` must stay 1. The pod reads its config from a Secret mounted at `/configs/channeld.json` and answers `/health` for readiness. A push to `main` publishes `ghcr.io/co-codin/reverse-engineering-centrifugo-go:0.1.0` after `go test ./...` passes.
+The chart runs one pod. History is in memory, so `replicaCount` must stay 1. The pod reads its config from a Secret mounted at `/configs/channeld.json` and answers `/health` for readiness. On SIGTERM it sends disconnect code 3001, which tells clients to reconnect, and waits up to 5 seconds. `GET /metrics` exposes connections, subscriptions, publications, and proxy latency. A push to `main` publishes `ghcr.io/co-codin/reverse-engineering-centrifugo-go:0.1.0` after `go test ./...` passes.
 
 The chart refuses the dev API key, the dev HMAC secret, an open HTTP API, and anonymous clients. Set those before installing:
 
@@ -96,7 +96,7 @@ curl -X POST http://127.0.0.1:4319/api/publish \
   -d '{"channel":"chat:lobby","data":{"text":"hello"}}'
 ```
 
-`configs/channeld.json` leaves the HTTP API open (`http_api.insecure`). The dev key, if you turn that off, is `dev-api-key` in the `X-API-Key` header. Connection tokens are HS256 JWTs signed with `dev-secret`. The console mints them at `POST /api/token`, which is a local helper and not part of Centrifugo.
+`configs/channeld.json` leaves the HTTP API open (`http_api.insecure`). The dev key, if you turn that off, is `dev-api-key` in the `X-API-Key` header. Connection tokens are HS256 JWTs signed with `dev-secret`. `exp` in that token is the session deadline. The connect reply then includes `expires` and `ttl`, and a later `refresh` command with a new token extends it. A subscription token has `sub`, `channel`, and `exp`. Present it on `subscribe` and the node allows that channel without calling the subscribe proxy. `sub_refresh` extends it the same way. The console mints connection tokens at `POST /api/token`. Pass `channel` instead of `channels` to mint a subscription token. That route is a local helper and not part of Centrifugo.
 
 Other HTTP methods: `broadcast`, `presence`, `presence_stats`, `history`, `history_remove`, `channels`, `info`, `disconnect`, `subscribe`, `unsubscribe`.
 
@@ -111,7 +111,7 @@ History keeps the last 100 publications for 5 minutes. Subscriptions are recover
 
 ## Application proxies
 
-A connect proxy runs when a browser connects without a JWT. A subscribe proxy runs for namespaces that set `subscribe_proxy_enabled`. Both are HTTP POSTs with the Centrifugo proxy JSON. Leave them unset and the node keeps using the token and the namespace flags.
+A connect proxy runs when a browser connects without a JWT. A subscribe proxy runs for namespaces that set `subscribe_proxy_enabled`, unless the subscribe command carries a valid channel token. A publish proxy runs for namespaces that set `publish_proxy_enabled`, after the namespace has allowed the client to publish. All three are HTTP POSTs with the Centrifugo proxy JSON. Leave them unset and the node keeps using the token and the namespace flags. An unreachable publish or subscribe proxy returns error 100 and leaves the connection open.
 
 ```json
 {
@@ -129,17 +129,25 @@ A connect proxy runs when a browser connects without a JWT. A subscribe proxy ru
       "subscribe": {
         "endpoint": "http://app:3000/centrifugo/subscribe",
         "timeout": "1s"
+      },
+      "publish": {
+        "endpoint": "http://app:3000/centrifugo/publish",
+        "timeout": "1s"
       }
     },
     "namespaces": [
-      { "name": "chat", "subscribe_proxy_enabled": true }
+      {
+        "name": "chat",
+        "subscribe_proxy_enabled": true,
+        "publish_proxy_enabled": true
+      }
     ]
   }
 }
 ```
 
-The connect handler returns `{"result":{"user":"56"}}`. The subscribe handler returns `{"result":{}}` to allow the channel, or `{"error":{"code":403,"message":"permission denied"}}` to refuse it. `Cookie` and `Authorization` from the WebSocket handshake are forwarded on the connect request as `headers`.
+The connect handler returns `{"result":{"user":"56"}}`. The subscribe handler returns `{"result":{}}` to allow the channel, or `{"error":{"code":403,"message":"permission denied"}}` to refuse it. The publish handler returns `{"result":{"data":{"text":"hello"}}}` to replace the publication, or an error object to refuse it. `Cookie` and `Authorization` from the WebSocket handshake are forwarded on the connect request as `headers`.
 
 ## Left for later
 
-Redis or NATS fan-out, protobuf, SSE, gRPC, publish proxy, delta compression, and the Centrifugo PRO API. Those are how Centrifugo runs more than one machine and how it calls back into an application for publish. The protocol above is enough for one node and for the official JavaScript client.
+Redis or NATS fan-out, protobuf, SSE, gRPC, delta compression, and the Centrifugo PRO API. Those are how Centrifugo runs more than one machine. The protocol above is enough for one node and for the official JavaScript client.

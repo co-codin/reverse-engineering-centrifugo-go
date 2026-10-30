@@ -53,6 +53,9 @@ config:
     subscribeProxy:
       endpoint: ""
       timeout: 1s
+    publishProxy:
+      endpoint: ""
+      timeout: 1s
     namespaces:
       - name: chat
       - name: news

@@ -87,6 +87,7 @@ func (n *Node) prepareConnect(c *conn, id uint32, body json.RawMessage) (connect
 		decision.user = checked.Claims.Sub
 		decision.connInfo = checked.Claims.Info
 		decision.channels = checked.Claims.Channels
+		decision.expireAt = checked.Claims.Exp
 	} else if n.cfg.ConnectProxyEnabled {
 		proxied, bad := n.connectProxy(c, id, req.Name, req.Version, req.Data)
 		if bad != nil {
@@ -144,7 +145,7 @@ func (n *Node) connectProxy(c *conn, id uint32, name, version string, data json.
 	if len(headers) > 0 {
 		payload["headers"] = headers
 	}
-	resp, err := n.postProxy(n.cfg.ConnectProxyEndpoint, proxyTimeout(n.cfg.ConnectProxyTimeoutMs), payload)
+	resp, err := n.postProxy("connect", n.cfg.ConnectProxyEndpoint, proxyTimeout(n.cfg.ConnectProxyTimeoutMs), payload)
 	if err != nil {
 		bad := connectError(id, discUnavailable, errInternal, "internal server error")
 		return connectProxyResult{}, &bad
@@ -204,11 +205,7 @@ func (n *Node) finishConnect(c *conn, id uint32, decision connectDecision) outco
 	c.protocolConnected = true
 	n.sessions[c.id] = c
 	n.armPing(c)
-	if decision.expireAt > time.Now().Unix() {
-		c.expireTimer = time.AfterFunc(time.Until(time.Unix(decision.expireAt, 0)), func() {
-			n.disconnect(c, discExpired, "expired")
-		})
-	}
+	n.armExpire(c, decision.expireAt)
 
 	subs := map[string]any{}
 	var effects []delivery
@@ -242,7 +239,48 @@ func (n *Node) finishConnect(c *conn, id uint32, decision connectDecision) outco
 	if len(decision.data) > 0 && string(decision.data) != "null" {
 		result["data"] = decision.data
 	}
+	for key, value := range expiryFields(decision.expireAt, time.Now().Unix()) {
+		result[key] = value
+	}
 	return outcome{reply: map[string]any{"id": id, "connect": result}, effects: effects}
+}
+
+func expiryFields(exp, now int64) map[string]any {
+	if exp > now {
+		ttl := exp - now
+		if ttl < 1 {
+			ttl = 1
+		}
+		return map[string]any{"expires": true, "ttl": ttl}
+	}
+	return map[string]any{"expires": false}
+}
+
+func (n *Node) onRefresh(c *conn, id uint32, body json.RawMessage) outcome {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return outcome{reply: errorReply(id, errBadRequest, "bad request")}
+	}
+	if req.Token == "" {
+		return outcome{reply: map[string]any{"id": id, "refresh": expiryFields(c.expireAt, time.Now().Unix())}}
+	}
+	checked, err := token.Verify(req.Token, n.cfg.TokenSecret, time.Now())
+	if err != nil {
+		return outcome{reply: errorReply(id, errUnauthorized, "unauthorized")}
+	}
+	if checked.BadRequest {
+		return outcome{reply: errorReply(id, errBadRequest, "bad request")}
+	}
+	if checked.Expired {
+		return connectError(id, discExpired, errTokenExpired, "token expired")
+	}
+	if checked.Claims.Sub != c.user {
+		return outcome{reply: errorReply(id, errUnauthorized, "unauthorized")}
+	}
+	n.armExpire(c, checked.Claims.Exp)
+	return outcome{reply: map[string]any{"id": id, "refresh": expiryFields(c.expireAt, time.Now().Unix())}}
 }
 
 func (n *Node) subscribeCommand(c *conn, id uint32, body json.RawMessage) outcome {
@@ -256,6 +294,7 @@ func (n *Node) subscribeCommand(c *conn, id uint32, body json.RawMessage) outcom
 		Offset      *uint64         `json:"offset"`
 		Flag        *int64          `json:"flag"`
 		Data        json.RawMessage `json:"data"`
+		Token       string          `json:"token"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil || req.Channel == "" {
 		return outcome{reply: errorReply(id, errBadRequest, "bad request")}
@@ -274,11 +313,28 @@ func (n *Node) subscribeCommand(c *conn, id uint32, body json.RawMessage) outcom
 	if code != 0 {
 		return outcome{reply: errorReply(id, code, message)}
 	}
-	if !ns.AllowSubscribeForClient {
+	var granted *token.Claims
+	if req.Token != "" {
+		checked, err := token.VerifySubscription(req.Token, n.cfg.TokenSecret, time.Now())
+		if err != nil {
+			return outcome{reply: errorReply(id, errUnauthorized, "unauthorized")}
+		}
+		if checked.BadRequest {
+			return outcome{reply: errorReply(id, errBadRequest, "bad request")}
+		}
+		if checked.Expired {
+			return outcome{reply: errorReply(id, errTokenExpired, "token expired")}
+		}
+		if checked.Claims.Channel != req.Channel || checked.Claims.Sub != user {
+			return outcome{reply: errorReply(id, errPermissionDenied, "permission denied")}
+		}
+		granted = &checked.Claims
+	}
+	if granted == nil && !ns.AllowSubscribeForClient {
 		return outcome{reply: errorReply(id, errPermissionDenied, "permission denied")}
 	}
 	var proxied *subscribeProxyResult
-	if ns.SubscribeProxyEnabled {
+	if granted == nil && ns.SubscribeProxyEnabled {
 		result, bad := n.subscribeProxy(c, id, user, req.Channel, req.Data)
 		if bad != nil {
 			return *bad
@@ -302,7 +358,7 @@ func (n *Node) subscribeCommand(c *conn, id uint32, body json.RawMessage) outcom
 	if c.dropped.Load() || !c.protocolConnected {
 		return outcome{}
 	}
-	return n.onSubscribe(c, id, req, ns, proxied)
+	return n.onSubscribe(c, id, req, ns, proxied, granted)
 }
 
 func (n *Node) subscribeProxy(c *conn, id uint32, user, channel string, data json.RawMessage) (subscribeProxyResult, *outcome) {
@@ -317,7 +373,7 @@ func (n *Node) subscribeProxy(c *conn, id uint32, user, channel string, data jso
 	if len(data) > 0 && string(data) != "null" {
 		payload["data"] = data
 	}
-	resp, err := n.postProxy(n.cfg.SubscribeProxyEndpoint, proxyTimeout(n.cfg.SubscribeProxyTimeoutMs), payload)
+	resp, err := n.postProxy("subscribe", n.cfg.SubscribeProxyEndpoint, proxyTimeout(n.cfg.SubscribeProxyTimeoutMs), payload)
 	if err != nil {
 		bad := outcome{reply: errorReply(id, errInternal, "internal server error")}
 		return subscribeProxyResult{}, &bad
@@ -372,7 +428,8 @@ func (n *Node) onSubscribe(c *conn, id uint32, req struct {
 	Offset      *uint64         `json:"offset"`
 	Flag        *int64          `json:"flag"`
 	Data        json.RawMessage `json:"data"`
-}, ns config.NamespaceConfig, proxied *subscribeProxyResult) outcome {
+	Token       string          `json:"token"`
+}, ns config.NamespaceConfig, proxied *subscribeProxyResult, granted *token.Claims) outcome {
 	hint := attachHint{recover: req.Recover, recoverable: req.Recoverable, positioned: req.Positioned, epoch: req.Epoch}
 	if req.Offset != nil {
 		hint.offset = *req.Offset
@@ -384,9 +441,46 @@ func (n *Node) onSubscribe(c *conn, id uint32, req struct {
 		hint.chanInfo = proxied.Info
 		hint.resultData = proxied.Data
 	}
+	if granted != nil {
+		hint.chanInfo = granted.Info
+		hint.expireAt = granted.Exp
+	}
 	result, effects, code, message := n.attachLocked(c, req.Channel, ns, hint)
 	if code != 0 {
 		return outcome{reply: errorReply(id, code, message)}
 	}
 	return outcome{reply: map[string]any{"id": id, "subscribe": result}, effects: effects}
+}
+
+func (n *Node) onSubRefresh(c *conn, id uint32, body json.RawMessage) outcome {
+	var req struct {
+		Channel string `json:"channel"`
+		Token   string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Channel == "" || req.Token == "" {
+		return outcome{reply: errorReply(id, errBadRequest, "bad request")}
+	}
+	if _, ok := c.subs[req.Channel]; !ok {
+		return outcome{reply: errorReply(id, errPermissionDenied, "permission denied")}
+	}
+	checked, err := token.VerifySubscription(req.Token, n.cfg.TokenSecret, time.Now())
+	if err != nil {
+		return outcome{reply: errorReply(id, errUnauthorized, "unauthorized")}
+	}
+	if checked.BadRequest {
+		return outcome{reply: errorReply(id, errBadRequest, "bad request")}
+	}
+	if checked.Expired {
+		return outcome{reply: errorReply(id, errTokenExpired, "token expired")}
+	}
+	if checked.Claims.Channel != req.Channel || checked.Claims.Sub != c.user {
+		return outcome{reply: errorReply(id, errPermissionDenied, "permission denied")}
+	}
+	if len(checked.Claims.Info) > 0 {
+		sub := c.subs[req.Channel]
+		sub.chanInfo = checked.Claims.Info
+		c.subs[req.Channel] = sub
+	}
+	n.armSubExpire(c, req.Channel, checked.Claims.Exp)
+	return outcome{reply: map[string]any{"id": id, "sub_refresh": expiryFields(checked.Claims.Exp, time.Now().Unix())}}
 }

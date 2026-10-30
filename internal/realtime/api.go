@@ -262,6 +262,20 @@ func (n *Node) issueToken(body map[string]json.RawMessage) (map[string]any, *api
 			}
 		}
 	}
+	var channel string
+	if raw, exists := body["channel"]; exists && string(raw) != "null" {
+		value, ok := jsonString(raw)
+		if !ok || value == "" {
+			return nil, &apiError{errBadRequest, "bad request"}
+		}
+		if _, code, message := config.ResolveChannel(n.cfg, value); code != 0 {
+			return nil, &apiError{code, message}
+		}
+		channel = value
+	}
+	if channel != "" && len(channels) > 0 {
+		return nil, &apiError{errBadRequest, "bad request"}
+	}
 	ttl := 3600
 	if raw, exists := body["ttl"]; exists && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &ttl); err != nil || ttl < 60 || ttl > 86_400 {
@@ -274,6 +288,7 @@ func (n *Node) issueToken(body map[string]json.RawMessage) (map[string]any, *api
 		claims.Info = info
 	}
 	claims.Channels = channels
+	claims.Channel = channel
 	signed, err := token.Sign(claims, n.cfg.TokenSecret)
 	if err != nil {
 		return nil, &apiError{errInternal, "internal server error"}

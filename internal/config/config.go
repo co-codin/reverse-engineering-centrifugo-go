@@ -24,6 +24,7 @@ type NamespaceConfig struct {
 	ForceRecovery             bool
 	ForcePositioning          bool
 	SubscribeProxyEnabled     bool
+	PublishProxyEnabled       bool
 }
 
 // Config is the process configuration.
@@ -41,6 +42,8 @@ type Config struct {
 	ConnectProxyTimeoutMs   int64
 	SubscribeProxyEndpoint  string
 	SubscribeProxyTimeoutMs int64
+	PublishProxyEndpoint    string
+	PublishProxyTimeoutMs   int64
 	NodeName                string
 	Version                 string
 	Namespaces              []NamespaceConfig
@@ -58,6 +61,7 @@ func Default() Config {
 		PingIntervalMs:          25_000,
 		ConnectProxyTimeoutMs:   1000,
 		SubscribeProxyTimeoutMs: 1000,
+		PublishProxyTimeoutMs:   1000,
 		NodeName:                "channeld",
 		Version:                 Version,
 		Namespaces: []NamespaceConfig{
@@ -258,6 +262,26 @@ func Parse(data []byte) (Config, error) {
 				cfg.SubscribeProxyTimeoutMs = ms
 			}
 		}
+		if publish, ok := proxy["publish"]; ok {
+			fields, err := object(publish, "channel.proxy.publish")
+			if err != nil {
+				return Config{}, err
+			}
+			if endpoint, ok := fields["endpoint"]; ok {
+				value, err := parseString(endpoint, "channel.proxy.publish.endpoint")
+				if err != nil {
+					return Config{}, fmt.Errorf("channel.proxy.publish.endpoint must be a URL")
+				}
+				cfg.PublishProxyEndpoint = value
+			}
+			if timeout, ok := fields["timeout"]; ok {
+				ms, err := parseTimeout(timeout, "channel.proxy.publish.timeout")
+				if err != nil {
+					return Config{}, err
+				}
+				cfg.PublishProxyTimeoutMs = ms
+			}
+		}
 	}
 	base := namespaceDefaults()
 	defaults, err := applyNamespace(channel, base, "")
@@ -295,12 +319,15 @@ func Parse(data []byte) (Config, error) {
 	cfg.Namespaces = namespaces
 	cfg.Version = Version
 	for _, ns := range namespaces {
+		name := ns.Name
+		if name == "" {
+			name = "(default)"
+		}
 		if ns.SubscribeProxyEnabled && cfg.SubscribeProxyEndpoint == "" {
-			name := ns.Name
-			if name == "" {
-				name = "(default)"
-			}
 			return Config{}, fmt.Errorf("namespace %s enables subscribe proxy but channel.proxy.subscribe.endpoint is empty", name)
+		}
+		if ns.PublishProxyEnabled && cfg.PublishProxyEndpoint == "" {
+			return Config{}, fmt.Errorf("namespace %s enables publish proxy but channel.proxy.publish.endpoint is empty", name)
 		}
 	}
 	return cfg, nil
@@ -365,6 +392,9 @@ func applyNamespace(raw map[string]json.RawMessage, base NamespaceConfig, name s
 		return NamespaceConfig{}, err
 	}
 	if next.SubscribeProxyEnabled, err = overrideBool(raw, "subscribe_proxy_enabled", next.SubscribeProxyEnabled, label); err != nil {
+		return NamespaceConfig{}, err
+	}
+	if next.PublishProxyEnabled, err = overrideBool(raw, "publish_proxy_enabled", next.PublishProxyEnabled, label); err != nil {
 		return NamespaceConfig{}, err
 	}
 	return next, nil
